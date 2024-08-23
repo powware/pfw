@@ -16,27 +16,29 @@ target_include_directories(
 
 target_link_libraries(pfw INTERFACE ntdll user32)
 
-target_compile_definitions(pfw INTERFACE -DWIN32_LEAN_AND_MEAN)
+target_compile_definitions(pfw INTERFACE -DWIN32_LEAN_AND_MEAN -DUNICODE
+                                         -D_UNICODE)
 
 install(
   TARGETS pfw
   EXPORT pfwTargets
-  ARCHIVE DESTINATION lib)
+  INCLUDES
+  DESTINATION include)
 
 install(DIRECTORY include/ DESTINATION include)
-
-include(CMakePackageConfigHelpers)
-
-write_basic_package_version_file(
-  "${CMAKE_CURRENT_BINARY_DIR}/pfwConfigVersion.cmake"
-  VERSION ${PROJECT_VERSION}
-  COMPATIBILITY AnyNewerVersion)
 
 install(
   EXPORT pfwTargets
   FILE pfwTargets.cmake
   NAMESPACE pfw::
   DESTINATION lib/cmake/pfw)
+
+include(CMakePackageConfigHelpers)
+
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/pfwConfigVersion.cmake"
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY AnyNewerVersion ARCH_INDEPENDENT)
 
 configure_file(pfwConfig.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/pfwConfig.cmake"
                @ONLY)

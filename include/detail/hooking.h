@@ -13,7 +13,7 @@
 
 // __thiscall should be hooked with __fastcall and the second argument left unused
 
-namespace pfw::internal
+namespace pfw
 {
 	class ProtectGuard
 	{
@@ -50,13 +50,14 @@ namespace pfw::internal
 			std::memset(address_, 0x90, original_opcode_.size());
 		}
 
-		Nop(std::uintptr_t address, std::size_t size) : Nop(reinterpret_cast<void *>(address), size)
+		Nop(std::uintptr_t address, std::size_t size) : Nop(reinterpret_cast<void *>(address), size) {}
+
+		~Nop()
 		{
 			ProtectGuard protect_guard(address_, original_opcode_.size());
 
 			std::memcpy(address_, original_opcode_.data(), original_opcode_.size());
 		}
-		~Nop();
 
 	private:
 		void *address_;
