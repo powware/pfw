@@ -8,29 +8,15 @@ project(
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-add_library(
-  pfw STATIC
-  ${PROJECT_SOURCE_DIR}/src/pfwlib.cpp ${PROJECT_SOURCE_DIR}/src/pefile.cpp
-  ${PROJECT_SOURCE_DIR}/src/stringutils.cpp
-  ${PROJECT_SOURCE_DIR}/src/hooking.cpp)
-
-if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-  set_target_properties(pfw PROPERTIES OUTPUT_NAME "pfw64")
-else()
-  set_target_properties(pfw PROPERTIES OUTPUT_NAME "pfw32")
-endif()
-
-set_target_properties(
-  pfw PROPERTIES ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Debug"
-                 ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Release")
+add_library(pfw INTERFACE)
 
 target_include_directories(
-  pfw PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-             $<INSTALL_INTERFACE:include>)
+  pfw INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+                $<INSTALL_INTERFACE:include>)
 
-target_link_libraries(pfw PRIVATE ntdll user32)
+target_link_libraries(pfw INTERFACE ntdll user32)
 
-add_definitions(-DWIN32_LEAN_AND_MEAN)
+target_compile_definitions(pfw INTERFACE -DWIN32_LEAN_AND_MEAN)
 
 install(
   TARGETS pfw
