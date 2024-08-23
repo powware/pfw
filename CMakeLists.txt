@@ -24,7 +24,9 @@ set_target_properties(
   pfw PROPERTIES ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Debug"
                  ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Release")
 
-target_include_directories(pfw PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(
+  pfw PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+             $<INSTALL_INTERFACE:include>)
 
 target_link_libraries(pfw PRIVATE ntdll user32)
 
