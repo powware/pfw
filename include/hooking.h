@@ -7,6 +7,8 @@
 
 #include <Windows.h>
 
+// __thiscall should be hooked with __fastcall and the second argument left unused
+
 namespace pfw::hooking
 {
 	class ProtectGuard
