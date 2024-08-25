@@ -3,6 +3,7 @@
 
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -14,71 +15,95 @@
 
 namespace pfw
 {
-	class Handle
+
+	struct HandleCloser
 	{
-	public:
-		Handle(HANDLE handle) : handle_(handle) {}
-		~Handle()
+		void operator()(HANDLE h) const
 		{
-			CloseHandle(handle_);
+			if (h && h != INVALID_HANDLE_VALUE)
+			{
+				CloseHandle(h);
+			}
 		}
-
-		operator HANDLE()
-		{
-			return handle_;
-		}
-
-	private:
-		HANDLE handle_;
 	};
 
-	Handle MakeValidHandle(HANDLE handle)
-	{
-		if (handle == INVALID_HANDLE_VALUE)
-		{
-			throw std::runtime_error("derive this error");
-		}
-		return Handle(handle);
-	}
+	using HandleGuard = std::unique_ptr<void, HandleCloser>;
 
-	void SetDebugPrivileges()
+	// class HandleGuard
+	// {
+	// public:
+	// 	HandleGuard(HANDLE handle) : handle_(handle) {}
+	// 	~HandleGuard()
+	// 	{
+	// 		CloseHandle(handle_);
+	// 	}
+
+	// 	operator HANDLE()
+	// 	{
+	// 		return handle_;
+	// 	}
+
+	// private:
+	// 	HANDLE handle_;
+	// };
+
+	bool
+	SetDebugPrivileges()
 	{
-		HANDLE current_process = GetCurrentProcess();
-		HANDLE temp_handle;
-		OpenProcessToken(current_process, TOKEN_ADJUST_PRIVILEGES, &temp_handle);
-		auto access_token = MakeValidHandle(temp_handle);
+		HANDLE current_process = GetCurrentProcess(); // pseudo handle no need for closing
+		HANDLE access_token;
+		auto success = OpenProcessToken(current_process, TOKEN_ADJUST_PRIVILEGES, &access_token);
+		if (!success || access_token == INVALID_HANDLE_VALUE)
+		{
+			return false;
+		}
+
+		HandleGuard access_token_guard(access_token);
+
 		LUID luid;
-		LookupPrivilegeValueW(nullptr, L"seDebugPrivilege", &luid);
+		if (!LookupPrivilegeValue(nullptr, L"seDebugPrivilege", &luid))
+		{
+			return false;
+		}
+
 		TOKEN_PRIVILEGES token_privileges;
 		token_privileges.PrivilegeCount = 1;
 		token_privileges.Privileges[0].Luid = luid;
 		token_privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-		bool result = AdjustTokenPrivileges(access_token, false, &token_privileges, 0, nullptr, nullptr);
+		success = AdjustTokenPrivileges(access_token, false, &token_privileges, 0, nullptr, nullptr);
 		DWORD error_code = GetLastError();
-		if (!result || error_code != ERROR_SUCCESS)
+		if (!success || error_code != ERROR_SUCCESS)
 		{
-			throw std::runtime_error("derive this error");
+			return false;
 		};
+
+		return true;
 	}
 
-	DWORD GetProcessId(std::wstring_view process_name)
+	std::optional<DWORD> GetProcessId(std::wstring_view process_name)
 	{
 		PROCESSENTRY32 process_entry;
 		process_entry.dwSize = sizeof(PROCESSENTRY32);
-		auto process_snapshot = MakeValidHandle(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
+		auto process_snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+		if (process_snapshot == INVALID_HANDLE_VALUE)
+		{
+			return std::nullopt;
+		}
+		HandleGuard process_snapshot_guard(process_snapshot);
 
 		if (!Process32First(process_snapshot, &process_entry))
 		{
-			throw std::runtime_error("derive this error");
+			return std::nullopt;
 		}
 		do
 		{
 			if (process_name.compare(reinterpret_cast<const wchar_t *>(process_entry.szExeFile)) == 0)
 			{
-				return process_entry.th32ProcessID;
+				return std::make_optional(process_entry.th32ProcessID);
 			}
 		} while (Process32Next(process_snapshot, &process_entry));
-		throw std::runtime_error("derive this error");
+
+		return std::nullopt;
 	}
 
 	// class ProcessHandle
