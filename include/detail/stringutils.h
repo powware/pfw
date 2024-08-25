@@ -10,6 +10,11 @@
 
 namespace pfw
 {
+	tolower(std::wstring ws)
+	{
+		std::transform(ws.begin(), ws.end(), [](char &c)
+					   { c = std::tolower(c); });
+	}
 
 	std::string WStringToString(std::wstring_view wstring_view)
 	{

@@ -515,46 +515,4 @@ return is;
 		return static_cast<char *>(address) + address_offset;
 	}
 
-	class RemoteThread
-	{
-	public:
-		RemoteThread(HANDLE process_handle, void *start_routine, void *parameters) : handle_(CreateRemoteThread(process_handle, nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(start_routine), parameters, 0, nullptr))
-		{
-			if (this->handle_ == nullptr)
-				throw "";
-		}
-
-		~RemoteThread()
-		{
-			CloseHandle(this->handle_);
-		}
-
-		bool Join(DWORD milliseconds = INFINITE)
-		{
-			DWORD result = WaitForSingleObject(this->handle_, milliseconds);
-			if (result == WAIT_OBJECT_0)
-			{
-				return true;
-			}
-			return false;
-		}
-
-		DWORD GetExitCode()
-		{
-			DWORD exit_code;
-			GetExitCodeThread(this->handle_, &exit_code);
-			return exit_code;
-		}
-
-		template <typename T>
-		operator T()
-		{
-			return this->handle_;
-		}
-
-	private:
-		HANDLE handle_;
-	};
-}
-
 #endif // __PFWLIB_H__

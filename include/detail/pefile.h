@@ -5,7 +5,7 @@
 
 #include "pfw.h"
 
-namespace pfw::internal
+namespace pfw
 {
 	IMAGE_DOS_HEADER *GetDOSHeader(void *image_base)
 	{
@@ -14,7 +14,7 @@ namespace pfw::internal
 
 	IMAGE_DOS_HEADER GetRemoteDOSHeader(HANDLE process_handle, void *image_base)
 	{
-		return pfw::GetRemoteMemory(process_handle, static_cast<IMAGE_DOS_HEADER *>(image_base));
+		return GetRemoteMemory(process_handle, static_cast<IMAGE_DOS_HEADER *>(image_base));
 	}
 
 	IMAGE_FILE_HEADER *GetPEHeader(void *image_base)
@@ -24,7 +24,7 @@ namespace pfw::internal
 
 	IMAGE_FILE_HEADER GetRemotePEHeader(HANDLE process_handle, void *image_base)
 	{
-		return pfw::GetRemoteMemory(process_handle, reinterpret_cast<IMAGE_FILE_HEADER *>(static_cast<char *>(image_base) + GetRemoteDOSHeader(process_handle, image_base).e_lfanew + sizeof(LONG)));
+		return GetRemoteMemory(process_handle, reinterpret_cast<IMAGE_FILE_HEADER *>(static_cast<char *>(image_base) + GetRemoteDOSHeader(process_handle, image_base).e_lfanew + sizeof(LONG)));
 	}
 
 	LONG GetNTSignature(void *image_base)
@@ -49,7 +49,7 @@ namespace pfw::internal
 
 	IMAGE_OPTIONAL_HEADER GetRemoteOptionalHeader(HANDLE process_handle, void *image_base)
 	{
-		return pfw::GetRemoteMemory(process_handle, reinterpret_cast<IMAGE_OPTIONAL_HEADER *>(reinterpret_cast<char *>(static_cast<char *>(image_base) + pfw::GetRemoteMemory(process_handle, static_cast<IMAGE_DOS_HEADER *>(image_base)).e_lfanew + sizeof(LONG)) + sizeof(IMAGE_FILE_HEADER)));
+		return GetRemoteMemory(process_handle, reinterpret_cast<IMAGE_OPTIONAL_HEADER *>(reinterpret_cast<char *>(static_cast<char *>(image_base) + pfw::GetRemoteMemory(process_handle, static_cast<IMAGE_DOS_HEADER *>(image_base)).e_lfanew + sizeof(LONG)) + sizeof(IMAGE_FILE_HEADER)));
 	}
 
 	IMAGE_DATA_DIRECTORY GetDataDirectory(void *image_base, unsigned int index)

@@ -1,17 +1,21 @@
 #ifndef __PFW_H__
 #define __PFW_H__
 
+#include <algorithm>
 #include <cstdlib>
+#include <cwctype>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 
 #include <Dwmapi.h>
+#include <Ntstatus.h>
 #include <TlHelp32.h>
 #include <Windows.h>
 
 #include "detail/hooking.h"
+#include "detail/winternal.h"
 
 namespace pfw
 {
@@ -117,72 +121,158 @@ namespace pfw
 		return HandleGuard(process_handle);
 	}
 
-	class VirtualMemory
+	bool GetRemoteMemory(HANDLE process_handle, void *destination, const void *source, std::size_t size)
 	{
-	public:
-		VirtualMemory(HANDLE process_handle, void *target_address, std::size_t size, DWORD allocation_type, DWORD protection, bool raii = true) : process_handle_(process_handle),
-																																				  handle_(VirtualAllocEx(process_handle, target_address, size, allocation_type, protection)), size_(size), remote_(true), raii_(raii)
+		SIZE_T size_read;
+		auto success = ReadProcessMemory(process_handle, source, destination, size, &size_read);
+		if (!success || size_read != size)
 		{
-			if (this->handle_ == nullptr)
-				throw std::bad_alloc();
-		};
-
-		VirtualMemory(void *target_address, std::size_t size, DWORD allocation_type, DWORD protection) : process_handle_(GetCurrentProcess()),
-																										 handle_(VirtualAlloc(target_address, size, allocation_type, protection)), size_(size), remote_(false), raii_(true)
-		{
-			if (this->handle_ == nullptr)
-				throw std::bad_alloc();
-		};
-
-		~VirtualMemory()
-		{
-			if (this->handle_ && this->raii_)
-			{
-				if (this->remote_)
-					VirtualFreeEx(process_handle_, handle_, 0, MEM_RELEASE);
-				else
-					VirtualFree(handle_, 0, MEM_RELEASE);
-			}
-		}
-		template <typename T>
-		operator T() const
-		{
-			return handle_;
+			return false;
 		}
 
-		void DisableRAII()
-		{
-			this->raii_ = false;
-		}
-
-	private:
-		HANDLE handle_;
-		HANDLE process_handle_;
-		const std::size_t size_;
-		const bool remote_;
-		bool raii_;
-	};
-
-	void LoadLibrary(HANDLE process_handle, std::wstring dll_path)
-	{
-		VirtualMemory loader_memory(process_handle, nullptr, dll_path.size(), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-		HMODULE kernel_module = pfw::GetRemoteModuleHandle(process_handle, "Kernel32.dll");
-		void *load_library = pfw::GetRemoteProcAddress(process_handle, kernel_module, "LoadLibraryW");
-		pfw::stringutils::SetRemoteString(process_handle, loader_memory, this->dll_path_);
-		pfw::RemoteThread loader_thread(process_handle, load_library, loader_memory);
-		loader_thread.Join();
-		// this->handle_ = loader_thread.GetExitCode();
+		return true;
 	}
 
-	void FreeLibrary()
+	template <typename TypePointer,
+			  typename = std::enable_if_t<std::is_pointer_v<TypePointer> &&
+										  !std::is_void_v<std::remove_pointer_t<TypePointer>>>>
+	auto GetRemoteMemory(HANDLE process_handle, const TypePointer source)
 	{
-		pfw::ProcessHandle process_handle = process_.GetProcessHandle();
-		VirtualMemory module_handle_memory(process_handle, nullptr, sizeof(HMODULE), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-		pfw::SetRemoteMemory(process_handle, module_handle_memory, this->handle_);
-		HMODULE kernel_module = pfw::GetRemoteModuleHandle(process_handle, "Kernel32.dll");
-		void *free_library = pfw::GetRemoteProcAddress(process_handle, kernel_module, "FreeLibrary");
-		pfw::RemoteThread loader_thread(process_handle, free_library, module_handle_memory);
-		loader_thread.Join();
+		using Type = typename std::remove_const_t<std::remove_pointer_t<TypePointer>>;
+		Type memory;
+		auto success = GetRemoteMemory(process_handle, &memory, source, sizeof(Type));
+		return success ? std::optional<Type>(memory) : std::nullopt;
+	}
+
+	template <typename Type>
+	std::optional<Type> GetRemoteMemory(HANDLE process_handle, const void *source)
+	{
+		return GetRemoteMemory(process_handle, const_cast<std::add_const_t<std::add_pointer_t<Type>>>(static_cast<std::add_pointer_t<Type>>(const_cast<void *>(source))));
+	}
+
+	bool SetRemoteMemory(HANDLE process_handle, void *destination, const void *source, std::size_t size)
+	{
+		SIZE_T size_written = 0;
+		auto success = WriteProcessMemory(process_handle, destination, source, size, &size_written);
+		if (!success || size_written != size)
+		{
+			return false;
+		}
+
+		return true;
+	}
+
+	// template <typename Type, typename = std::enable_if_t<std::is_same<Type, std::decay_t<Type>>::value>>
+	// std::size_t SetRemoteMemory(HANDLE process_handle, void *address, const Type &value)
+	// {
+	// 	SIZE_T size_written = 0;
+	// 	pfw::SetRemoteMemory(process_handle, address, &value, sizeof(Type));
+	// 	return std::size_t(size_written);
+	// }
+
+	std::optional<HMODULE> GetRemoteModuleHandle(HANDLE process_handle, std::wstring module_name)
+	{
+		PROCESS_BASIC_INFORMATION process_basic_information;
+		NTSTATUS status = NtQueryInformationProcess(process_handle, ProcessBasicInformation, &process_basic_information, sizeof(process_basic_information), NULL);
+		if (status != STATUS_SUCCESS)
+		{
+			return std::nullopt;
+		}
+
+		PEB peb;
+		if (!GetRemoteMemory(process_handle, &peb, process_basic_information.PebBaseAddress, sizeof(peb)))
+		{
+			return std::nullopt;
+		}
+
+		PEB_LDR_DATA loader_data;
+		if (!GetRemoteMemory(process_handle, &loader_data, peb.Ldr, sizeof(loader_data)))
+		{
+			return std::nullopt;
+		}
+
+		std::for_each(module_name.begin(), module_name.end(), [](auto &c)
+					  { c = std::towlower(c); });
+
+		LIST_ENTRY *list_entry_pointer = loader_data.InLoadOrderModuleList.Flink;
+		while (list_entry_pointer != reinterpret_cast<LIST_ENTRY *>(reinterpret_cast<char *>(peb.Ldr) + offsetof(PEB_LDR_DATA, InLoadOrderModuleList)))
+		{
+			LDR_DATA_TABLE_ENTRY table_entry;
+			GetRemoteMemory(process_handle, &table_entry, list_entry_pointer, sizeof(table_entry));
+
+			std::wstring dll_name;
+			dll_name.resize(table_entry.BaseDllName.Length); // '\0' extended
+			GetRemoteMemory(process_handle, dll_name.data(), table_entry.BaseDllName.Buffer, table_entry.BaseDllName.Length);
+
+			std::for_each(dll_name.begin(), dll_name.end(), [](auto &c)
+						  { c = std::towlower(c); });
+			if (dll_name.compare(module_name) == 0)
+			{
+				return reinterpret_cast<HMODULE>(table_entry.DllBase);
+			}
+
+			list_entry_pointer = table_entry.InLoadOrderLinks.Flink;
+		}
+
+		return std::nullopt;
+	}
+
+	std::optional<void *> GetRemoteProcAddress(HANDLE process_handle, HMODULE module_handle, std::wstring procedure_name)
+	{
+		IMAGE_DOS_HEADER dos_header;
+		if (!GetRemoteMemory(process_handle, &dos_header, module_handle, sizeof(dos_header)))
+		{
+			return std::nullopt;
+		}
+
+		IMAGE_NT_HEADERS nt_headers;
+		if (!GetRemoteMemory(process_handle, &nt_headers, reinterpret_cast<char *>(module_handle) + dos_header.e_lfanew, sizeof(nt_headers)))
+		{
+			return std::nullopt;
+		}
+
+		IMAGE_EXPORT_DIRECTORY export_directory;
+		if (!GetRemoteMemory(process_handle, &export_directory, reinterpret_cast<char *>(module_handle) + nt_headers.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress, sizeof(export_directory)))
+		{
+			return std::nullopt;
+		}
+
+		std::vector<DWORD> name_offsets(export_directory.NumberOfNames);
+		if (!GetRemoteMemory(process_handle, name_offsets.data(), reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNames, name_offsets.size()))
+		{
+			return std::nullopt;
+		}
+		for (std::size_t i = 0; i < name_offsets.size(); i++)
+		{
+			char c;
+			std::wstring procedure_entry_name;
+			do
+			{
+				std::size_t len = 0;
+				if (!GetRemoteMemory(process_handle, &c, reinterpret_cast<char *>(module_handle) + name_offsets[i] + len++, sizeof(char)))
+				{
+					return std::nullopt;
+				}
+				procedure_entry_name.push_back(wchar_t(c)); // allowed since it is ASCII
+			} while (c);
+
+			if (procedure_entry_name.compare(procedure_name) == 0)
+			{
+				WORD ordinal;
+				if (!GetRemoteMemory(process_handle, &ordinal, reinterpret_cast<WORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNameOrdinals) + i, sizeof(WORD)))
+				{
+					return std::nullopt;
+				}
+				DWORD procedure_offset;
+				if (!GetRemoteMemory(process_handle, &procedure_offset, reinterpret_cast<DWORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfFunctions) + ordinal, sizeof(DWORD)))
+				{
+					return std::nullopt;
+				}
+				return reinterpret_cast<char *>(module_handle) + procedure_offset;
+			}
+		}
+
+		return std::nullopt;
 	}
 }
 
