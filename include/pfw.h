@@ -106,31 +106,84 @@ namespace pfw
 		return std::nullopt;
 	}
 
-	// class ProcessHandle
-	// {
-	// public:
-	// 	ProcessHandle(DWORD process_id)
-	// 	{
-	// 		HANDLE process_handle = OpenProcess(PROCESS_ALL_ACCESS, false, process_id);
-	// 		if (process_handle == INVALID_HANDLE_VALUE)
-	// 			throw std::runtime_error("derive this error");
-	// 		return process_handle;
-	// 	}
-	// 	ProcessHandle(std::wstring_view process_name) : ProcessHandle(GetProcessId(process_name)) {}
+	std::optional<HandleGuard> OpenProcess(DWORD process_id)
+	{
+		HANDLE process_handle = ::OpenProcess(PROCESS_ALL_ACCESS, false, process_id);
+		if (process_handle == INVALID_HANDLE_VALUE)
+		{
+			return std::nullopt;
+		}
 
-	// 	~ProcessHandle()
-	// 	{
-	// 		CloseHandle(handle_);
-	// 	}
+		return HandleGuard(process_handle);
+	}
 
-	// 	operator HANDLE()
-	// 	{
-	// 		return handle_;
-	// 	}
+	class VirtualMemory
+	{
+	public:
+		VirtualMemory(HANDLE process_handle, void *target_address, std::size_t size, DWORD allocation_type, DWORD protection, bool raii = true) : process_handle_(process_handle),
+																																				  handle_(VirtualAllocEx(process_handle, target_address, size, allocation_type, protection)), size_(size), remote_(true), raii_(raii)
+		{
+			if (this->handle_ == nullptr)
+				throw std::bad_alloc();
+		};
 
-	// private:
-	// 	HANDLE handle_;
-	// };
+		VirtualMemory(void *target_address, std::size_t size, DWORD allocation_type, DWORD protection) : process_handle_(GetCurrentProcess()),
+																										 handle_(VirtualAlloc(target_address, size, allocation_type, protection)), size_(size), remote_(false), raii_(true)
+		{
+			if (this->handle_ == nullptr)
+				throw std::bad_alloc();
+		};
+
+		~VirtualMemory()
+		{
+			if (this->handle_ && this->raii_)
+			{
+				if (this->remote_)
+					VirtualFreeEx(process_handle_, handle_, 0, MEM_RELEASE);
+				else
+					VirtualFree(handle_, 0, MEM_RELEASE);
+			}
+		}
+		template <typename T>
+		operator T() const
+		{
+			return handle_;
+		}
+
+		void DisableRAII()
+		{
+			this->raii_ = false;
+		}
+
+	private:
+		HANDLE handle_;
+		HANDLE process_handle_;
+		const std::size_t size_;
+		const bool remote_;
+		bool raii_;
+	};
+
+	void LoadLibrary(HANDLE process_handle, std::wstring dll_path)
+	{
+		VirtualMemory loader_memory(process_handle, nullptr, dll_path.size(), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+		HMODULE kernel_module = pfw::GetRemoteModuleHandle(process_handle, "Kernel32.dll");
+		void *load_library = pfw::GetRemoteProcAddress(process_handle, kernel_module, "LoadLibraryW");
+		pfw::stringutils::SetRemoteString(process_handle, loader_memory, this->dll_path_);
+		pfw::RemoteThread loader_thread(process_handle, load_library, loader_memory);
+		loader_thread.Join();
+		// this->handle_ = loader_thread.GetExitCode();
+	}
+
+	void FreeLibrary()
+	{
+		pfw::ProcessHandle process_handle = process_.GetProcessHandle();
+		VirtualMemory module_handle_memory(process_handle, nullptr, sizeof(HMODULE), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+		pfw::SetRemoteMemory(process_handle, module_handle_memory, this->handle_);
+		HMODULE kernel_module = pfw::GetRemoteModuleHandle(process_handle, "Kernel32.dll");
+		void *free_library = pfw::GetRemoteProcAddress(process_handle, kernel_module, "FreeLibrary");
+		pfw::RemoteThread loader_thread(process_handle, free_library, module_handle_memory);
+		loader_thread.Join();
+	}
 }
 
 #endif // __PFW_H__
