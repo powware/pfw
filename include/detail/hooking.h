@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <span>
 #include <vector>
 
 #include <Windows.h>
@@ -165,39 +166,28 @@ namespace pfw
 	class VTableHook
 	{
 	public:
-		VTableHook(void *class_pointer, std::size_t table_offset, std::size_t table_size) : table_pointer_(reinterpret_cast<void ***>(static_cast<char *>(class_pointer) + table_offset)),
-																							source_table_(*table_pointer_),
-																							table_size_(table_size),
-																							table_entry_count_(table_size_ / sizeof(void *))
+		VTableHook(void *instance, std::size_t function_count, std::size_t table_offset = 0) : vtable_pointer_(reinterpret_cast<void ***>(static_cast<char *>(instance) + table_offset)),
+																							   original_vtable_(*vtable_pointer_, function_count), vtable_(function_count)
 		{
-			hook_table_ = new void *[table_entry_count_];
-			std::memcpy(hook_table_, source_table_, table_size_);
-			*table_pointer_ = hook_table_;
+			std::memcpy(vtable_.data(), original_vtable_.data(), function_count * sizeof(void *));
+			*vtable_pointer_ = vtable_.data();
 		}
 		~VTableHook()
 		{
-			*table_pointer_ = source_table_;
-			delete[] hook_table_;
-		}
-		void *AttachHook(void *function_hook, std::size_t table_entry_index)
-		{
-			if (table_entry_index >= table_entry_count_)
-				return nullptr;
-			void *previous_entry = hook_table_[table_entry_index];
-			hook_table_[table_entry_index] = function_hook;
-			return previous_entry;
-		}
-		void DetachHook(std::size_t table_entry_index)
-		{
-			hook_table_[table_entry_index] = source_table_[table_entry_index];
+			*vtable_pointer_ = original_vtable_.data();
 		}
 
+		auto &operator[](std::size_t index)
+		{
+			return vtable_[index];
+		}
+
+		std::span<void *> original_vtable_;
+
 	private:
-		void **hook_table_;
-		void ***table_pointer_ = nullptr;
-		void **source_table_;
-		std::size_t table_size_;
-		std::size_t table_entry_count_;
+		void ***vtable_pointer_;
+		std::vector<void *> vtable_;
+		// void **original_vtable_;
 	};
 }
 #endif // __HOOKING_H__
