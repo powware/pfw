@@ -8,6 +8,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <variant>
 
 #include <Dwmapi.h>
 #include <Ntstatus.h>
@@ -247,7 +248,7 @@ namespace pfw
 		return std::nullopt;
 	}
 
-	std::optional<void *> GetRemoteProcAddress(HANDLE process_handle, HMODULE module_handle, std::wstring procedure_name)
+	std::optional<void *> GetRemoteProcAddress(HANDLE process_handle, HMODULE module_handle, std::variant<std::string, WORD> name_or_ordinal) // procedure names are stored in ASCII
 	{
 		IMAGE_DOS_HEADER dos_header;
 		if (!GetRemoteMemory(process_handle, &dos_header, module_handle, sizeof(dos_header)))
@@ -267,39 +268,54 @@ namespace pfw
 			return std::nullopt;
 		}
 
-		std::vector<DWORD> name_offsets(export_directory.NumberOfNames);
-		if (!GetRemoteMemory(process_handle, name_offsets.data(), reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNames, name_offsets.size()))
+		std::optional<WORD> ordinal;
+		if (std::holds_alternative<std::string>(name_or_ordinal))
 		{
-			return std::nullopt;
-		}
-		for (std::size_t i = 0; i < name_offsets.size(); i++)
-		{
-			char c;
-			std::wstring procedure_entry_name;
-			do
+			std::vector<DWORD> name_offsets(export_directory.NumberOfNames);
+			if (!GetRemoteMemory(process_handle, name_offsets.data(), reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNames, name_offsets.size()))
 			{
-				std::size_t len = 0;
-				if (!GetRemoteMemory(process_handle, &c, reinterpret_cast<char *>(module_handle) + name_offsets[i] + len++, sizeof(char)))
-				{
-					return std::nullopt;
-				}
-				procedure_entry_name.push_back(wchar_t(c)); // allowed since it is ASCII
-			} while (c);
-
-			if (procedure_entry_name.compare(procedure_name) == 0)
-			{
-				WORD ordinal;
-				if (!GetRemoteMemory(process_handle, &ordinal, reinterpret_cast<WORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNameOrdinals) + i, sizeof(WORD)))
-				{
-					return std::nullopt;
-				}
-				DWORD procedure_offset;
-				if (!GetRemoteMemory(process_handle, &procedure_offset, reinterpret_cast<DWORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfFunctions) + ordinal, sizeof(DWORD)))
-				{
-					return std::nullopt;
-				}
-				return reinterpret_cast<char *>(module_handle) + procedure_offset;
+				return std::nullopt;
 			}
+
+			for (std::size_t i = 0; i < name_offsets.size(); i++)
+			{
+				char c;
+				std::string entry_name;
+				do
+				{
+					std::size_t len = 0;
+					if (!GetRemoteMemory(process_handle, &c, reinterpret_cast<char *>(module_handle) + name_offsets[i] + len++, sizeof(char)))
+					{
+						return std::nullopt;
+					}
+					entry_name.push_back(c);
+				} while (c);
+
+				if (entry_name.compare(std::get<std::string>(name_or_ordinal)) == 0)
+				{
+					WORD temp_ordinal;
+					if (!GetRemoteMemory(process_handle, &temp_ordinal, reinterpret_cast<WORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNameOrdinals) + i, sizeof(WORD)))
+					{
+						return std::nullopt;
+					}
+					ordinal = temp_ordinal;
+					break;
+				}
+			}
+		}
+		else
+		{
+			ordinal = std::get<WORD>(name_or_ordinal);
+		}
+
+		if (ordinal)
+		{
+			DWORD procedure_offset;
+			if (!GetRemoteMemory(process_handle, &procedure_offset, reinterpret_cast<DWORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfFunctions) + *ordinal, sizeof(DWORD)))
+			{
+				return std::nullopt;
+			}
+			return reinterpret_cast<char *>(module_handle) + procedure_offset;
 		}
 
 		return std::nullopt;
