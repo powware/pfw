@@ -164,21 +164,23 @@ namespace pfw
 		return true;
 	}
 
-	template <typename TypePointer,
-			  typename = std::enable_if_t<std::is_pointer_v<TypePointer> &&
-										  !std::is_void_v<std::remove_pointer_t<TypePointer>>>>
-	auto GetRemoteMemory(HANDLE process_handle, const TypePointer source)
-	{
-		using Type = typename std::remove_const_t<std::remove_pointer_t<TypePointer>>;
-		Type memory;
-		auto success = GetRemoteMemory(process_handle, &memory, source, sizeof(Type));
-		return success ? std::optional<Type>(memory) : std::nullopt;
-	}
+	// template <typename TypePointer,
+	// 		  typename = std::enable_if_t<std::is_pointer_v<TypePointer> &&
+	// 									  !std::is_void_v<std::remove_pointer_t<TypePointer>>>>
+	// auto GetRemoteMemory(HANDLE process_handle, const TypePointer source)
+	// {
+	// 	using Type = typename std::remove_const_t<std::remove_pointer_t<TypePointer>>;
+	// 	Type memory;
+	// 	auto success = GetRemoteMemory(process_handle, &memory, source, sizeof(Type));
+	// 	return success ? std::optional<Type>(memory) : std::nullopt;
+	// }
 
 	template <typename Type>
 	std::optional<Type> GetRemoteMemory(HANDLE process_handle, const void *source)
 	{
-		return GetRemoteMemory(process_handle, const_cast<std::add_const_t<std::add_pointer_t<Type>>>(static_cast<std::add_pointer_t<Type>>(const_cast<void *>(source))));
+		Type memory;
+		auto success = GetRemoteMemory(process_handle, &memory, source, sizeof(Type));
+		return success ? std::optional<Type>(memory) : std::nullopt;
 	}
 
 	bool SetRemoteMemory(HANDLE process_handle, void *destination, const void *source, std::size_t size)
@@ -222,8 +224,11 @@ namespace pfw
 			return std::nullopt;
 		}
 
-		std::for_each(module_name.begin(), module_name.end(), [](auto &c)
-					  { c = std::towlower(c); });
+		const auto to_lower = [](std::wstring &s)
+		{ std::for_each(s.begin(), s.end(), [](auto &c)
+						{ c = std::towlower(c); }); };
+
+		to_lower(module_name);
 
 		LIST_ENTRY *list_entry_pointer = loader_data.InLoadOrderModuleList.Flink;
 		while (list_entry_pointer != reinterpret_cast<LIST_ENTRY *>(reinterpret_cast<char *>(peb.Ldr) + offsetof(PEB_LDR_DATA, InLoadOrderModuleList)))
@@ -232,11 +237,10 @@ namespace pfw
 			GetRemoteMemory(process_handle, &table_entry, list_entry_pointer, sizeof(table_entry));
 
 			std::wstring dll_name;
-			dll_name.resize(table_entry.BaseDllName.Length); // '\0' extended
+			dll_name.resize(table_entry.BaseDllName.Length);
 			GetRemoteMemory(process_handle, dll_name.data(), table_entry.BaseDllName.Buffer, table_entry.BaseDllName.Length);
 
-			std::for_each(dll_name.begin(), dll_name.end(), [](auto &c)
-						  { c = std::towlower(c); });
+			to_lower(dll_name);
 			if (dll_name.compare(module_name) == 0)
 			{
 				return reinterpret_cast<HMODULE>(table_entry.DllBase);
@@ -269,43 +273,51 @@ namespace pfw
 		}
 
 		const std::optional<WORD> ordinal = [&]() -> std::optional<WORD>
-		{if (std::holds_alternative<std::string>(name_or_ordinal))
 		{
-			std::vector<DWORD> name_offsets(export_directory.NumberOfNames);
-			if (!GetRemoteMemory(process_handle, name_offsets.data(), reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNames, name_offsets.size()))
+			if (std::holds_alternative<std::string>(name_or_ordinal))
 			{
+				std::vector<DWORD> name_offsets(export_directory.NumberOfNames);
+				if (!GetRemoteMemory(process_handle, name_offsets.data(), reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNames, name_offsets.size()))
+				{
+					return std::nullopt;
+				}
+
+				for (auto name_offset : name_offsets)
+				{
+					std::string entry_name;
+					while (true)
+					{
+						auto c = GetRemoteMemory<char>(process_handle, reinterpret_cast<char *>(module_handle) + name_offset + entry_name.size());
+						if (!c)
+						{
+							return std::nullopt;
+						}
+
+						if (c == '\0')
+						{
+							break;
+						}
+
+						entry_name.push_back(*c);
+					}
+
+					if (entry_name.compare(std::get<std::string>(name_or_ordinal)) == 0)
+					{
+						auto ordinal = GetRemoteMemory<WORD>(process_handle, reinterpret_cast<WORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNameOrdinals) + i);
+						if (!ordinal)
+						{
+							return std::nullopt;
+						}
+						return ordinal;
+					}
+				}
 				return std::nullopt;
 			}
-
-			for (std::size_t i = 0; i < name_offsets.size(); i++)
+			else
 			{
-				char c;
-				std::string entry_name;
-				do
-				{
-					std::size_t len = 0;
-					if (!GetRemoteMemory(process_handle, &c, reinterpret_cast<char *>(module_handle) + name_offsets[i] + len++, sizeof(char)))
-					{
-						return std::nullopt;
-					}
-					entry_name.push_back(c);
-				} while (c);
-
-				if (entry_name.compare(std::get<std::string>(name_or_ordinal)) == 0)
-				{
-					WORD ordinal;
-					if (!GetRemoteMemory(process_handle, &ordinal, reinterpret_cast<WORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNameOrdinals) + i, sizeof(WORD)))
-					{
-						return std::nullopt;
-					}
-					return ordinal;
-				}
+				return std::get<WORD>(name_or_ordinal);
 			}
-		}
-		else
-		{
-			return std::get<WORD>(name_or_ordinal);
-		} }();
+		}();
 
 		if (ordinal)
 		{
