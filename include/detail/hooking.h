@@ -181,9 +181,10 @@ namespace pfw
 		{
 			return vtable_[index + kRTTIOffset];
 		}
-		static const std::size_t kRTTIOffset = 2;
 
 	private:
+		static const std::size_t kRTTIOffset = 1; // offset is only one void* but ida shows incorrectly, this is why the vtable is also one pointer bigger than i thought
+
 		void ***vtable_pointer_;
 		std::vector<void *> vtable_;
 
