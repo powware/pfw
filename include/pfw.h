@@ -179,8 +179,7 @@ namespace pfw
 	std::optional<Type> GetRemoteMemory(HANDLE process_handle, const void *source)
 	{
 		Type memory;
-		auto success = GetRemoteMemory(process_handle, &memory, source, sizeof(Type));
-		return success ? std::optional<Type>(memory) : std::nullopt;
+		return GetRemoteMemory(process_handle, &memory, source, sizeof(Type)) ? std::make_optional<Type>(memory) : std::nullopt;
 	}
 
 	bool SetRemoteMemory(HANDLE process_handle, void *destination, const void *source, std::size_t size)
