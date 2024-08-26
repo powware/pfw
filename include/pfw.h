@@ -297,7 +297,7 @@ namespace pfw
 			if (std::holds_alternative<std::string>(name_or_ordinal))
 			{
 				std::vector<DWORD> name_offsets(export_directory.NumberOfNames);
-				if (!GetRemoteMemory(process_handle, name_offsets.data(), reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNames, name_offsets.size()))
+				if (!GetRemoteMemory(process_handle, name_offsets.data(), reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNames, name_offsets.size() * sizeof(DWORD)))
 				{
 					return std::nullopt;
 				}
