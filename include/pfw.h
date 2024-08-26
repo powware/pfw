@@ -57,6 +57,11 @@ namespace pfw
 			return *handle_;
 		}
 
+		operator HANDLE() const noexcept
+		{
+			return *handle_;
+		}
+
 	private:
 		std::optional<HANDLE> handle_;
 
@@ -87,7 +92,7 @@ namespace pfw
 		token_privileges.PrivilegeCount = 1;
 		token_privileges.Privileges[0].Luid = luid;
 		token_privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-		auto success = AdjustTokenPrivileges(access_token->get(), false, &token_privileges, 0, nullptr, nullptr);
+		auto success = AdjustTokenPrivileges(*access_token, false, &token_privileges, 0, nullptr, nullptr);
 		DWORD error_code = GetLastError();
 		if (!success || error_code != ERROR_SUCCESS)
 		{
@@ -107,7 +112,7 @@ namespace pfw
 			return std::nullopt;
 		}
 
-		if (!Process32First(process_snapshot->get(), &process_entry))
+		if (!Process32First(*process_snapshot, &process_entry))
 		{
 			return std::nullopt;
 		}
@@ -133,7 +138,7 @@ namespace pfw
 
 		module_entry.dwSize = sizeof(MODULEENTRY32);
 
-		if (!Module32First(module_snapshot->get(), &module_entry))
+		if (!Module32First(*module_snapshot, &module_entry))
 		{
 			return std::nullopt;
 		}
