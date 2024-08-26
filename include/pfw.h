@@ -182,6 +182,27 @@ namespace pfw
 		return GetRemoteMemory(process_handle, &memory, source, sizeof(Type)) ? std::make_optional<Type>(memory) : std::nullopt;
 	}
 
+	std::optional<std::string> GetRemoteString(HANDLE process_handle, const void *source)
+	{
+		const char *iterator = static_cast<const char *>(source);
+
+		std::string result;
+		while (true)
+		{
+			auto c = GetRemoteMemory<char>(process_handle, static_cast<const char *>(source) + result.size());
+			if (!c)
+			{
+				return std::nullopt;
+			}
+			if (c == '\0')
+			{
+				return result;
+			}
+
+			result.push_back(*c);
+		}
+	}
+
 	bool SetRemoteMemory(HANDLE process_handle, void *destination, const void *source, std::size_t size)
 	{
 		SIZE_T size_written = 0;
@@ -281,35 +302,21 @@ namespace pfw
 					return std::nullopt;
 				}
 
-				for (auto name_offset : name_offsets)
+				for (std::size_t i = 0; i < name_offsets.size(); ++i)
 				{
-					std::string entry_name;
-					while (true)
-					{
-						auto c = GetRemoteMemory<char>(process_handle, reinterpret_cast<char *>(module_handle) + name_offset + entry_name.size());
-						if (!c)
-						{
-							return std::nullopt;
-						}
-
-						if (c == '\0')
-						{
-							break;
-						}
-
-						entry_name.push_back(*c);
-					}
-
-					if (entry_name.compare(std::get<std::string>(name_or_ordinal)) == 0)
+					auto entry_name = GetRemoteString(process_handle, reinterpret_cast<char *>(module_handle) + name_offsets[i]);
+					if (entry_name && entry_name->compare(std::get<std::string>(name_or_ordinal)) == 0)
 					{
 						auto ordinal = GetRemoteMemory<WORD>(process_handle, reinterpret_cast<WORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNameOrdinals) + i);
 						if (!ordinal)
 						{
 							return std::nullopt;
 						}
+
 						return ordinal;
 					}
 				}
+
 				return std::nullopt;
 			}
 			else
