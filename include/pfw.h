@@ -71,11 +71,11 @@ namespace pfw
 
 	bool SetDebugPrivileges()
 	{
-		HANDLE current_process = GetCurrentProcess(); // pseudo handle no need for closing
-		auto access_token = [current_process]()
+		const auto current_process = GetCurrentProcess(); // pseudo handle no need for closing
+		const auto access_token = [current_process]()
 		{
 			HANDLE access_token;
-			auto success = OpenProcessToken(current_process, TOKEN_ADJUST_PRIVILEGES, &access_token);
+			const auto success = OpenProcessToken(current_process, TOKEN_ADJUST_PRIVILEGES, &access_token);
 			return success ? HandleGuard::Create(access_token) : std::nullopt;
 		}();
 		if (!access_token)
@@ -93,8 +93,8 @@ namespace pfw
 		token_privileges.PrivilegeCount = 1;
 		token_privileges.Privileges[0].Luid = luid;
 		token_privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-		auto success = AdjustTokenPrivileges(*access_token, false, &token_privileges, 0, nullptr, nullptr);
-		DWORD error_code = GetLastError();
+		const auto success = AdjustTokenPrivileges(*access_token, false, &token_privileges, 0, nullptr, nullptr);
+		const DWORD error_code = GetLastError();
 		if (!success || error_code != ERROR_SUCCESS)
 		{
 			return false;
@@ -131,7 +131,7 @@ namespace pfw
 	std::optional<std::wstring> ExecutablePathFromProcessId(DWORD process_id)
 	{
 		MODULEENTRY32 module_entry;
-		auto module_snapshot = HandleGuard::Create(CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, process_id));
+		const auto module_snapshot = HandleGuard::Create(CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, process_id));
 		if (!module_snapshot)
 		{
 			return std::nullopt;
@@ -268,8 +268,8 @@ namespace pfw
 			return std::nullopt;
 		}
 
-		std::optional<WORD> ordinal;
-		if (std::holds_alternative<std::string>(name_or_ordinal))
+		const std::optional<WORD> ordinal = [&]() -> std::optional<WORD>
+		{if (std::holds_alternative<std::string>(name_or_ordinal))
 		{
 			std::vector<DWORD> name_offsets(export_directory.NumberOfNames);
 			if (!GetRemoteMemory(process_handle, name_offsets.data(), reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNames, name_offsets.size()))
@@ -293,20 +293,19 @@ namespace pfw
 
 				if (entry_name.compare(std::get<std::string>(name_or_ordinal)) == 0)
 				{
-					WORD temp_ordinal;
-					if (!GetRemoteMemory(process_handle, &temp_ordinal, reinterpret_cast<WORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNameOrdinals) + i, sizeof(WORD)))
+					WORD ordinal;
+					if (!GetRemoteMemory(process_handle, &ordinal, reinterpret_cast<WORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNameOrdinals) + i, sizeof(WORD)))
 					{
 						return std::nullopt;
 					}
-					ordinal = temp_ordinal;
-					break;
+					return ordinal;
 				}
 			}
 		}
 		else
 		{
-			ordinal = std::get<WORD>(name_or_ordinal);
-		}
+			return std::get<WORD>(name_or_ordinal);
+		} }();
 
 		if (ordinal)
 		{
