@@ -257,8 +257,8 @@ namespace pfw
 			GetRemoteMemory(process_handle, &table_entry, list_entry_pointer, sizeof(table_entry));
 
 			std::wstring dll_name;
-			dll_name.resize(table_entry.BaseDllName.Length);
-			GetRemoteMemory(process_handle, dll_name.data(), table_entry.BaseDllName.Buffer, table_entry.BaseDllName.Length);
+			dll_name.resize(table_entry.BaseDllName.Length / sizeof(wchar_t));
+			GetRemoteMemory(process_handle, dll_name.data(), table_entry.BaseDllName.Buffer, dll_name.size() * sizeof(wchar_t));
 
 			to_lower(dll_name);
 			if (dll_name.compare(module_name) == 0)
