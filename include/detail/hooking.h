@@ -166,15 +166,15 @@ namespace pfw
 	class VTableHook
 	{
 	public:
-		VTableHook(void *instance, std::size_t function_count, std::size_t table_offset = 0) : vtable_pointer_(reinterpret_cast<void ***>(static_cast<char *>(instance) + table_offset)), vtable_(function_count + 2)
+		VTableHook(void *instance, std::size_t function_count, std::size_t table_offset = 0) : vtable_pointer_(reinterpret_cast<void ***>(instance)), vtable_(function_count + 2)
 		{
-			original_vtable_ = std::span<void *>(*reinterpret_cast<void ***>(static_cast<char *>(instance) + table_offset - 2), function_count);
-			std::memcpy(vtable_.data(), original_vtable_.data(), function_count * sizeof(void *));
+			original_vtable_ = *vtable_pointer_;
+			std::memcpy(vtable_.data(), original_vtable_ - 2, vtable_.size() * sizeof(void *));
 			*vtable_pointer_ = &vtable_[2];
 		}
 		~VTableHook()
 		{
-			*vtable_pointer_ = original_vtable_.data();
+			*vtable_pointer_ = original_vtable_;
 		}
 
 		auto &operator[](std::size_t index)
@@ -187,8 +187,7 @@ namespace pfw
 		std::vector<void *> vtable_;
 
 	public:
-		std::span<void *> original_vtable_;
-		// void **original_vtable_;
+		void **original_vtable_;
 	};
 }
 #endif // __HOOKING_H__
