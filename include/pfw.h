@@ -20,49 +20,62 @@
 namespace pfw
 {
 
-	struct HandleCloser
+	// always holds a valid handle
+	class HandleGuard
 	{
-		void operator()(HANDLE h) const
+	public:
+		static std::optional<HandleGuard> Create(HANDLE handle)
 		{
-			if (h && h != INVALID_HANDLE_VALUE)
+			return handle == INVALID_HANDLE_VALUE ? std::nullopt : std::make_optional(HandleGuard(handle));
+		}
+
+		~HandleGuard()
+		{
+			if (handle_) // only invalid after move operations
 			{
-				CloseHandle(h);
+				CloseHandle(*handle_);
 			}
 		}
+
+		HandleGuard() = delete;
+		HandleGuard(const HandleGuard &) = delete;
+		HandleGuard &operator=(const HandleGuard &) = delete;
+		HandleGuard &operator=(HandleGuard &&) noexcept = delete;
+
+		HandleGuard(HandleGuard &&rhs) : HandleGuard(*rhs.handle_)
+		{
+			rhs.handle_ = std::nullopt;
+		}
+
+		auto operator*() const noexcept
+		{
+			return *handle_;
+		}
+
+		auto get() const noexcept
+		{
+			return *handle_;
+		}
+
+	private:
+		std::optional<HANDLE> handle_;
+
+		HandleGuard(HANDLE handle) : handle_(handle) {}
 	};
 
-	using HandleGuard = std::unique_ptr<void, HandleCloser>;
-
-	// class HandleGuard
-	// {
-	// public:
-	// 	HandleGuard(HANDLE handle) : handle_(handle) {}
-	// 	~HandleGuard()
-	// 	{
-	// 		CloseHandle(handle_);
-	// 	}
-
-	// 	operator HANDLE()
-	// 	{
-	// 		return handle_;
-	// 	}
-
-	// private:
-	// 	HANDLE handle_;
-	// };
-
-	bool
-	SetDebugPrivileges()
+	bool SetDebugPrivileges()
 	{
 		HANDLE current_process = GetCurrentProcess(); // pseudo handle no need for closing
-		HANDLE access_token;
-		auto success = OpenProcessToken(current_process, TOKEN_ADJUST_PRIVILEGES, &access_token);
-		if (!success || access_token == INVALID_HANDLE_VALUE)
+		auto access_token = [current_process]()
+		{
+			HANDLE access_token;
+			auto success = OpenProcessToken(current_process, TOKEN_ADJUST_PRIVILEGES, &access_token);
+			return success ? HandleGuard::Create(access_token) : std::nullopt;
+		}();
+		if (!access_token)
 		{
 			return false;
 		}
-
-		HandleGuard access_token_guard(access_token);
 
 		LUID luid;
 		if (!LookupPrivilegeValue(nullptr, L"seDebugPrivilege", &luid))
@@ -74,7 +87,7 @@ namespace pfw
 		token_privileges.PrivilegeCount = 1;
 		token_privileges.Privileges[0].Luid = luid;
 		token_privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-		success = AdjustTokenPrivileges(access_token, false, &token_privileges, 0, nullptr, nullptr);
+		auto success = AdjustTokenPrivileges(access_token->get(), false, &token_privileges, 0, nullptr, nullptr);
 		DWORD error_code = GetLastError();
 		if (!success || error_code != ERROR_SUCCESS)
 		{
@@ -88,14 +101,13 @@ namespace pfw
 	{
 		PROCESSENTRY32 process_entry;
 		process_entry.dwSize = sizeof(PROCESSENTRY32);
-		auto process_snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-		if (process_snapshot == INVALID_HANDLE_VALUE)
+		auto process_snapshot = HandleGuard::Create(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
+		if (!process_snapshot)
 		{
 			return std::nullopt;
 		}
-		HandleGuard process_snapshot_guard(process_snapshot);
 
-		if (!Process32First(process_snapshot, &process_entry))
+		if (!Process32First(process_snapshot->get(), &process_entry))
 		{
 			return std::nullopt;
 		}
@@ -105,20 +117,33 @@ namespace pfw
 			{
 				return std::make_optional(process_entry.th32ProcessID);
 			}
-		} while (Process32Next(process_snapshot, &process_entry));
+		} while (Process32Next(process_snapshot->get(), &process_entry));
 
 		return std::nullopt;
 	}
 
-	std::optional<HandleGuard> OpenProcess(DWORD process_id)
+	std::optional<std::wstring> ExecutablePathFromProcessId(DWORD process_id)
 	{
-		HANDLE process_handle = ::OpenProcess(PROCESS_ALL_ACCESS, false, process_id);
-		if (process_handle == INVALID_HANDLE_VALUE)
+		MODULEENTRY32 module_entry;
+		auto module_snapshot = HandleGuard::Create(CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, process_id));
+		if (!module_snapshot)
 		{
 			return std::nullopt;
 		}
 
-		return HandleGuard(process_handle);
+		module_entry.dwSize = sizeof(MODULEENTRY32);
+
+		if (!Module32First(module_snapshot->get(), &module_entry))
+		{
+			return std::nullopt;
+		}
+
+		return module_entry.szExePath;
+	}
+
+	std::optional<HandleGuard> OpenProcess(DWORD process_id, DWORD access = PROCESS_ALL_ACCESS)
+	{
+		return HandleGuard::Create(::OpenProcess(access, false, process_id));
 	}
 
 	bool GetRemoteMemory(HANDLE process_handle, void *destination, const void *source, std::size_t size)
