@@ -272,7 +272,7 @@ namespace pfw
 		return std::nullopt;
 	}
 
-	std::optional<void *> GetRemoteProcAddress(HANDLE process_handle, HMODULE module_handle, std::variant<std::string, WORD> name_or_ordinal) // procedure names are stored in ASCII
+	std::optional<void *> GetRemoteProcAddress(HANDLE process_handle, HMODULE module_handle, std::variant<std::string_view, WORD> name_or_ordinal) // procedure names are stored in ASCII
 	{
 		IMAGE_DOS_HEADER dos_header;
 		if (!GetRemoteMemory(process_handle, &dos_header, module_handle, sizeof(dos_header)))
@@ -294,7 +294,7 @@ namespace pfw
 
 		const std::optional<WORD> ordinal = [&]() -> std::optional<WORD>
 		{
-			if (std::holds_alternative<std::string>(name_or_ordinal))
+			if (std::holds_alternative<std::string_view>(name_or_ordinal))
 			{
 				std::vector<DWORD> name_offsets(export_directory.NumberOfNames);
 				if (!GetRemoteMemory(process_handle, name_offsets.data(), reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNames, name_offsets.size() * sizeof(DWORD)))
@@ -305,7 +305,7 @@ namespace pfw
 				for (std::size_t i = 0; i < name_offsets.size(); ++i)
 				{
 					auto entry_name = GetRemoteString(process_handle, reinterpret_cast<char *>(module_handle) + name_offsets[i]);
-					if (entry_name && entry_name->compare(std::get<std::string>(name_or_ordinal)) == 0)
+					if (entry_name && entry_name->compare(std::get<std::string_view>(name_or_ordinal)) == 0)
 					{
 						auto ordinal = GetRemoteMemory<WORD>(process_handle, reinterpret_cast<WORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNameOrdinals) + i);
 						if (!ordinal)
