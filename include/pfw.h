@@ -302,9 +302,8 @@ namespace pfw
 					return std::nullopt;
 				}
 
-				std::size_t lhs = 0;
-				std::size_t rhs = name_offsets.size();
-				while (true)
+				const auto &name = std::get<std::string_view>(name_or_ordinal);
+				for (std::size_t lhs = 0, rhs = name_offsets.size();;)
 				{
 					auto middle = (lhs + rhs) / 2;
 					auto entry_name = GetRemoteString(process_handle, reinterpret_cast<char *>(module_handle) + name_offsets[middle]);
@@ -312,7 +311,8 @@ namespace pfw
 					{
 						return std::nullopt;
 					}
-					auto comparison = std::get<std::string_view>(name_or_ordinal).compare(*entry_name);
+
+					auto comparison = name.compare(*entry_name);
 					if (comparison == 0)
 					{
 						auto ordinal = GetRemoteMemory<WORD>(process_handle, reinterpret_cast<WORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNameOrdinals) + middle);
@@ -320,6 +320,7 @@ namespace pfw
 						{
 							return std::nullopt;
 						}
+
 						return ordinal;
 					}
 					else if (lhs == rhs)
@@ -346,12 +347,13 @@ namespace pfw
 
 		if (ordinal)
 		{
-			DWORD procedure_offset;
-			if (!GetRemoteMemory(process_handle, &procedure_offset, reinterpret_cast<DWORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfFunctions) + *ordinal, sizeof(DWORD)))
+			auto procedure_offset = GetRemoteMemory<DWORD>(process_handle, reinterpret_cast<DWORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfFunctions) + *ordinal);
+			if (!procedure_offset)
 			{
 				return std::nullopt;
 			}
-			return reinterpret_cast<char *>(module_handle) + procedure_offset;
+
+			return reinterpret_cast<char *>(module_handle) + *procedure_offset;
 		}
 
 		return std::nullopt;
