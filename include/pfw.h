@@ -302,18 +302,37 @@ namespace pfw
 					return std::nullopt;
 				}
 
-				for (std::size_t i = 0; i < name_offsets.size(); ++i)
+				std::size_t lhs = 0;
+				std::size_t rhs = name_offsets.size();
+				while (true)
 				{
-					auto entry_name = GetRemoteString(process_handle, reinterpret_cast<char *>(module_handle) + name_offsets[i]);
-					if (entry_name && entry_name->compare(std::get<std::string_view>(name_or_ordinal)) == 0)
+					auto middle = (lhs + rhs) / 2;
+					auto entry_name = GetRemoteString(process_handle, reinterpret_cast<char *>(module_handle) + name_offsets[middle]);
+					if (!entry_name)
 					{
-						auto ordinal = GetRemoteMemory<WORD>(process_handle, reinterpret_cast<WORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNameOrdinals) + i);
+						return std::nullopt;
+					}
+					auto comparison = std::get<std::string_view>(name_or_ordinal).compare(*entry_name);
+					if (comparison == 0)
+					{
+						auto ordinal = GetRemoteMemory<WORD>(process_handle, reinterpret_cast<WORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNameOrdinals) + middle);
 						if (!ordinal)
 						{
 							return std::nullopt;
 						}
-
 						return ordinal;
+					}
+					else if (lhs == rhs)
+					{
+						return std::nullopt;
+					}
+					else if (comparison > 0)
+					{
+						lhs = middle;
+					}
+					else if (comparison < 0)
+					{
+						rhs = middle;
 					}
 				}
 
