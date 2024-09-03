@@ -32,44 +32,49 @@ namespace pfw
 
 		~HandleGuard()
 		{
-			if (handle_) // only invalid after move operations
+			if (handle_ != INVALID_HANDLE_VALUE) // only invalid after move operations
 			{
-				CloseHandle(*handle_);
+				CloseHandle(handle_);
 			}
 		}
 
 		HandleGuard() = delete;
 		HandleGuard(const HandleGuard &) = delete;
 		HandleGuard &operator=(const HandleGuard &) = delete;
-		HandleGuard &operator=(HandleGuard &&) noexcept = delete;
 
-		HandleGuard(HandleGuard &&rhs) : HandleGuard(*rhs.handle_)
+		HandleGuard(HandleGuard &&rhs) : HandleGuard(rhs.handle_)
 		{
-			rhs.handle_ = std::nullopt;
+			rhs.handle_ = INVALID_HANDLE_VALUE;
+		}
+
+		HandleGuard &operator=(HandleGuard &&rhs) noexcept
+		{
+			handle_ = rhs.handle_;
+			rhs.handle_ = INVALID_HANDLE_VALUE;
 		}
 
 		auto operator*() const noexcept
 		{
-			return *handle_;
+			return handle_;
 		}
 
 		auto get() const noexcept
 		{
-			return *handle_;
+			return handle_;
 		}
 
 		operator HANDLE() const noexcept
 		{
-			return *handle_;
+			return handle_;
 		}
 
 	private:
-		std::optional<HANDLE> handle_;
+		HANDLE handle_;
 
 		HandleGuard(HANDLE handle) : handle_(handle) {}
 	};
 
-	bool SetDebugPrivileges()
+	inline bool SetDebugPrivileges()
 	{
 		const auto current_process = GetCurrentProcess(); // pseudo handle no need for closing
 		const auto access_token = [current_process]()
@@ -103,7 +108,7 @@ namespace pfw
 		return true;
 	}
 
-	std::optional<DWORD> GetProcessId(std::wstring_view process_name)
+	inline std::optional<DWORD> GetProcessId(std::wstring_view process_name)
 	{
 		PROCESSENTRY32 process_entry;
 		process_entry.dwSize = sizeof(PROCESSENTRY32);
@@ -128,7 +133,7 @@ namespace pfw
 		return std::nullopt;
 	}
 
-	std::optional<std::wstring> ExecutablePathFromProcessId(DWORD process_id)
+	inline std::optional<std::wstring> ExecutablePathFromProcessId(DWORD process_id)
 	{
 		MODULEENTRY32 module_entry;
 		const auto module_snapshot = HandleGuard::Create(CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, process_id));
@@ -147,12 +152,12 @@ namespace pfw
 		return module_entry.szExePath;
 	}
 
-	std::optional<HandleGuard> OpenProcess(DWORD process_id, DWORD access = PROCESS_ALL_ACCESS)
+	inline std::optional<HandleGuard> OpenProcess(DWORD process_id, DWORD access = PROCESS_ALL_ACCESS)
 	{
 		return HandleGuard::Create(::OpenProcess(access, false, process_id));
 	}
 
-	bool GetRemoteMemory(HANDLE process_handle, void *destination, const void *source, std::size_t size)
+	inline bool GetRemoteMemory(HANDLE process_handle, void *destination, const void *source, std::size_t size)
 	{
 		SIZE_T size_read;
 		auto success = ReadProcessMemory(process_handle, source, destination, size, &size_read);
@@ -176,13 +181,13 @@ namespace pfw
 	// }
 
 	template <typename Type>
-	std::optional<Type> GetRemoteMemory(HANDLE process_handle, const void *source)
+	inline std::optional<Type> GetRemoteMemory(HANDLE process_handle, const void *source)
 	{
 		Type memory;
 		return GetRemoteMemory(process_handle, &memory, source, sizeof(Type)) ? std::make_optional<Type>(memory) : std::nullopt;
 	}
 
-	std::optional<std::string> GetRemoteString(HANDLE process_handle, const void *source)
+	inline std::optional<std::string> GetRemoteString(HANDLE process_handle, const void *source)
 	{
 		const char *iterator = static_cast<const char *>(source);
 
@@ -203,7 +208,7 @@ namespace pfw
 		}
 	}
 
-	bool SetRemoteMemory(HANDLE process_handle, void *destination, const void *source, std::size_t size)
+	inline bool SetRemoteMemory(HANDLE process_handle, void *destination, const void *source, std::size_t size)
 	{
 		SIZE_T size_written = 0;
 		auto success = WriteProcessMemory(process_handle, destination, source, size, &size_written);
@@ -223,7 +228,7 @@ namespace pfw
 	// 	return std::size_t(size_written);
 	// }
 
-	std::optional<HMODULE> GetRemoteModuleHandle(HANDLE process_handle, std::wstring module_name)
+	inline std::optional<HMODULE> GetRemoteModuleHandle(HANDLE process_handle, std::wstring module_name)
 	{
 		PROCESS_BASIC_INFORMATION process_basic_information;
 		NTSTATUS status = NtQueryInformationProcess(process_handle, ProcessBasicInformation, &process_basic_information, sizeof(process_basic_information), NULL);
@@ -272,7 +277,7 @@ namespace pfw
 		return std::nullopt;
 	}
 
-	std::optional<void *> GetRemoteProcAddress(HANDLE process_handle, HMODULE module_handle, std::variant<std::string_view, WORD> name_or_ordinal) // procedure names are stored in ASCII
+	inline std::optional<void *> GetRemoteProcAddress(HANDLE process_handle, HMODULE module_handle, std::variant<std::string_view, WORD> name_or_ordinal) // procedure names are stored in ASCII
 	{
 		IMAGE_DOS_HEADER dos_header;
 		if (!GetRemoteMemory(process_handle, &dos_header, module_handle, sizeof(dos_header)))
