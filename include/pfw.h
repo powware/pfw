@@ -89,7 +89,7 @@ namespace pfw
 		}
 
 		LUID luid;
-		if (!LookupPrivilegeValue(nullptr, L"seDebugPrivilege", &luid))
+		if (!LookupPrivilegeValueW(nullptr, L"seDebugPrivilege", &luid))
 		{
 			return false;
 		}
@@ -118,7 +118,7 @@ namespace pfw
 			return std::nullopt;
 		}
 
-		if (!Process32First(*process_snapshot, &process_entry))
+		if (!Process32FirstW(*process_snapshot, &process_entry))
 		{
 			return std::nullopt;
 		}
@@ -128,7 +128,7 @@ namespace pfw
 			{
 				return std::make_optional(process_entry.th32ProcessID);
 			}
-		} while (Process32Next(process_snapshot->get(), &process_entry));
+		} while (Process32NextW(process_snapshot->get(), &process_entry));
 
 		return std::nullopt;
 	}
@@ -144,7 +144,7 @@ namespace pfw
 
 		module_entry.dwSize = sizeof(MODULEENTRY32);
 
-		if (!Module32First(*module_snapshot, &module_entry))
+		if (!Module32FirstW(*module_snapshot, &module_entry))
 		{
 			return std::nullopt;
 		}
@@ -155,6 +155,23 @@ namespace pfw
 	inline std::optional<HandleGuard> OpenProcess(DWORD process_id, DWORD access = PROCESS_ALL_ACCESS)
 	{
 		return HandleGuard::Create(::OpenProcess(access, false, process_id));
+	}
+
+	inline std::optional<bool> IsProcess32bit(DWORD process_id)
+	{
+		auto process = pfw::OpenProcess(process_id, PROCESS_QUERY_LIMITED_INFORMATION);
+		if (!process)
+		{
+			return std::nullopt;
+		}
+
+		BOOL is_32bit;
+		if (!IsWow64Process(*process, &is_32bit))
+		{
+			return std::nullopt;
+		}
+
+		return is_32bit;
 	}
 
 	inline bool GetRemoteMemory(HANDLE process_handle, void *destination, const void *source, std::size_t size)
