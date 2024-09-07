@@ -22,15 +22,15 @@ namespace pfw
 {
 
 	// always holds a valid handle
-	class HandleGuard
+	class Handle
 	{
 	public:
-		static std::optional<HandleGuard> Create(HANDLE handle)
+		static std::optional<Handle> Create(HANDLE handle)
 		{
-			return handle == INVALID_HANDLE_VALUE ? std::nullopt : std::make_optional(HandleGuard(handle));
+			return handle == INVALID_HANDLE_VALUE ? std::nullopt : std::make_optional(Handle(handle));
 		}
 
-		~HandleGuard()
+		~Handle()
 		{
 			if (handle_ != INVALID_HANDLE_VALUE) // only invalid after move operations
 			{
@@ -38,16 +38,16 @@ namespace pfw
 			}
 		}
 
-		HandleGuard() = delete;
-		HandleGuard(const HandleGuard &) = delete;
-		HandleGuard &operator=(const HandleGuard &) = delete;
+		Handle() = delete;
+		Handle(const Handle &) = delete;
+		Handle &operator=(const Handle &) = delete;
 
-		HandleGuard(HandleGuard &&rhs) : HandleGuard(rhs.handle_)
+		Handle(Handle &&rhs) : Handle(rhs.handle_)
 		{
 			rhs.handle_ = INVALID_HANDLE_VALUE;
 		}
 
-		HandleGuard &operator=(HandleGuard &&rhs) noexcept
+		Handle &operator=(Handle &&rhs) noexcept
 		{
 			handle_ = rhs.handle_;
 			rhs.handle_ = INVALID_HANDLE_VALUE;
@@ -71,7 +71,7 @@ namespace pfw
 	private:
 		HANDLE handle_;
 
-		HandleGuard(HANDLE handle) : handle_(handle) {}
+		Handle(HANDLE handle) : handle_(handle) {}
 	};
 
 	inline bool SetDebugPrivileges()
@@ -81,7 +81,7 @@ namespace pfw
 		{
 			HANDLE access_token;
 			const auto success = OpenProcessToken(current_process, TOKEN_ADJUST_PRIVILEGES, &access_token);
-			return success ? HandleGuard::Create(access_token) : std::nullopt;
+			return success ? Handle::Create(access_token) : std::nullopt;
 		}();
 		if (!access_token)
 		{
@@ -112,7 +112,7 @@ namespace pfw
 	{
 		PROCESSENTRY32 process_entry;
 		process_entry.dwSize = sizeof(PROCESSENTRY32);
-		auto process_snapshot = HandleGuard::Create(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
+		auto process_snapshot = Handle::Create(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
 		if (!process_snapshot)
 		{
 			return std::nullopt;
@@ -136,7 +136,7 @@ namespace pfw
 	inline std::optional<std::wstring> ExecutablePathFromProcessId(DWORD process_id)
 	{
 		MODULEENTRY32 module_entry;
-		const auto module_snapshot = HandleGuard::Create(CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, process_id));
+		const auto module_snapshot = Handle::Create(CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, process_id));
 		if (!module_snapshot)
 		{
 			return std::nullopt;
@@ -152,9 +152,9 @@ namespace pfw
 		return module_entry.szExePath;
 	}
 
-	inline std::optional<HandleGuard> OpenProcess(DWORD process_id, DWORD access = PROCESS_ALL_ACCESS)
+	inline std::optional<Handle> OpenProcess(DWORD process_id, DWORD access = PROCESS_ALL_ACCESS)
 	{
-		return HandleGuard::Create(::OpenProcess(access, false, process_id));
+		return Handle::Create(::OpenProcess(access, false, process_id));
 	}
 
 	inline std::optional<bool> IsProcess32bit(DWORD process_id)
