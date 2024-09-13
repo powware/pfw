@@ -263,7 +263,7 @@ namespace pfw
 			{
 				return std::nullopt;
 			}
-			if (c == '\0')
+			else if (c == '\0')
 			{
 				return result;
 			}
@@ -320,7 +320,7 @@ namespace pfw
 		to_lower(module_name);
 
 		LIST_ENTRY *list_entry_pointer = loader_data.InLoadOrderModuleList.Flink;
-		while (list_entry_pointer != reinterpret_cast<LIST_ENTRY *>(reinterpret_cast<char *>(peb.Ldr) + offsetof(PEB_LDR_DATA, InLoadOrderModuleList)))
+		while (list_entry_pointer != reinterpret_cast<LIST_ENTRY *>(reinterpret_cast<unsigned char *>(peb.Ldr) + offsetof(PEB_LDR_DATA, InLoadOrderModuleList)))
 		{
 			LDR_DATA_TABLE_ENTRY table_entry;
 			GetRemoteMemory(process_handle, &table_entry, list_entry_pointer, sizeof(table_entry));
@@ -350,79 +350,73 @@ namespace pfw
 		}
 
 		IMAGE_NT_HEADERS nt_headers;
-		if (!GetRemoteMemory(process_handle, &nt_headers, reinterpret_cast<char *>(module_handle) + dos_header.e_lfanew, sizeof(nt_headers)))
+		if (!GetRemoteMemory(process_handle, &nt_headers, reinterpret_cast<unsigned char *>(module_handle) + dos_header.e_lfanew, sizeof(nt_headers)))
 		{
 			return std::nullopt;
 		}
 
 		IMAGE_EXPORT_DIRECTORY export_directory;
-		if (!GetRemoteMemory(process_handle, &export_directory, reinterpret_cast<char *>(module_handle) + nt_headers.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress, sizeof(export_directory)))
+		if (!GetRemoteMemory(process_handle, &export_directory, reinterpret_cast<unsigned char *>(module_handle) + nt_headers.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress, sizeof(export_directory)))
 		{
 			return std::nullopt;
 		}
 
 		const std::optional<WORD> ordinal = [&]() -> std::optional<WORD>
 		{
-			if (std::holds_alternative<std::string_view>(name_or_ordinal))
+			if (std::holds_alternative<WORD>(name_or_ordinal))
 			{
-				std::vector<DWORD> name_offsets(export_directory.NumberOfNames);
-				if (!GetRemoteMemory(process_handle, name_offsets.data(), reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNames, name_offsets.size() * sizeof(DWORD)))
+				return std::get<WORD>(name_or_ordinal);
+			}
+
+			std::vector<DWORD> name_offsets(export_directory.NumberOfNames);
+			if (!GetRemoteMemory(process_handle, name_offsets.data(), reinterpret_cast<unsigned char *>(module_handle) + export_directory.AddressOfNames, name_offsets.size() * sizeof(DWORD)))
+			{
+				return std::nullopt;
+			}
+
+			const auto &name = std::get<std::string_view>(name_or_ordinal);
+			for (std::size_t lhs = 0, rhs = name_offsets.size(); lhs != rhs;)
+			{
+				auto middle = lhs + (rhs - lhs) / 2; // prevents overflow compared to (lhs + rhs) / 2
+				auto entry_name = GetRemoteString(process_handle, reinterpret_cast<unsigned char *>(module_handle) + name_offsets[middle]);
+				if (!entry_name)
 				{
 					return std::nullopt;
 				}
 
-				const auto &name = std::get<std::string_view>(name_or_ordinal);
-				for (std::size_t lhs = 0, rhs = name_offsets.size();;)
+				auto comparison = name.compare(*entry_name);
+				if (comparison == 0)
 				{
-					auto middle = (lhs + rhs) / 2;
-					auto entry_name = GetRemoteString(process_handle, reinterpret_cast<char *>(module_handle) + name_offsets[middle]);
-					if (!entry_name)
+					auto ordinal = GetRemoteMemory<WORD>(process_handle, reinterpret_cast<WORD *>(reinterpret_cast<unsigned char *>(module_handle) + export_directory.AddressOfNameOrdinals) + middle);
+					if (!ordinal)
 					{
 						return std::nullopt;
 					}
 
-					auto comparison = name.compare(*entry_name);
-					if (comparison == 0)
-					{
-						auto ordinal = GetRemoteMemory<WORD>(process_handle, reinterpret_cast<WORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfNameOrdinals) + middle);
-						if (!ordinal)
-						{
-							return std::nullopt;
-						}
-
-						return ordinal;
-					}
-					else if (lhs == rhs)
-					{
-						return std::nullopt;
-					}
-					else if (comparison > 0)
-					{
-						lhs = middle;
-					}
-					else if (comparison < 0)
-					{
-						rhs = middle;
-					}
+					return ordinal;
 				}
+				else if (comparison > 0)
+				{
+					lhs = middle + 1;
+				}
+				else if (comparison < 0)
+				{
+					rhs = middle;
+				}
+			}
 
-				return std::nullopt;
-			}
-			else
-			{
-				return std::get<WORD>(name_or_ordinal);
-			}
+			return std::nullopt;
 		}();
 
 		if (ordinal)
 		{
-			auto procedure_offset = GetRemoteMemory<DWORD>(process_handle, reinterpret_cast<DWORD *>(reinterpret_cast<char *>(module_handle) + export_directory.AddressOfFunctions) + *ordinal);
+			auto procedure_offset = GetRemoteMemory<DWORD>(process_handle, reinterpret_cast<DWORD *>(reinterpret_cast<unsigned char *>(module_handle) + export_directory.AddressOfFunctions) + *ordinal);
 			if (!procedure_offset)
 			{
 				return std::nullopt;
 			}
 
-			return reinterpret_cast<char *>(module_handle) + *procedure_offset;
+			return reinterpret_cast<unsigned char *>(module_handle) + *procedure_offset;
 		}
 
 		return std::nullopt;
