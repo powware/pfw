@@ -10,10 +10,14 @@
 #include <string>
 #include <variant>
 
+#pragma warning(push, 0)
+
 #include <Dwmapi.h>
 #include <Ntstatus.h>
 #include <TlHelp32.h>
 #include <Windows.h>
+
+#pragma warning(pop)
 
 #include "detail/hooking.h"
 #include "detail/winternal.h"
@@ -74,6 +78,23 @@ namespace pfw
 		Handle(HANDLE handle) : handle_(handle) {}
 	};
 
+	inline std::optional<std::wstring> GenerateUUID()
+	{
+		UUID uuid;
+		RPC_WSTR uuid_string;
+		if (UuidCreate(&uuid))
+		{
+			return std::nullopt;
+		}
+		if (UuidToStringW(&uuid, &uuid_string))
+		{
+			return std::nullopt;
+		}
+		std::wstring result(reinterpret_cast<wchar_t *>(uuid_string));
+		RpcStringFreeW(&uuid_string);
+		return result;
+	}
+
 	inline bool SetDebugPrivileges()
 	{
 		const auto current_process = GetCurrentProcess(); // pseudo handle no need for closing
@@ -133,7 +154,7 @@ namespace pfw
 		return std::nullopt;
 	}
 
-	inline std::optional<std::wstring> ExecutablePathFromProcessId(DWORD process_id)
+	inline std::optional<std::wstring> GetExecutablePathFromProcessId(DWORD process_id)
 	{
 		MODULEENTRY32 module_entry;
 		const auto module_snapshot = Handle::Create(CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, process_id));
@@ -152,9 +173,35 @@ namespace pfw
 		return module_entry.szExePath;
 	}
 
+	inline std::wstring GetModuleFileName(HMODULE module)
+	{
+
+		std::wstring executable(MAX_PATH, L'\0');
+		auto size = GetModuleFileNameW(module, executable.data(), executable.size());
+		executable.resize(size);
+		return executable;
+	}
+
 	inline std::optional<Handle> OpenProcess(DWORD process_id, DWORD access = PROCESS_ALL_ACCESS)
 	{
 		return Handle::Create(::OpenProcess(access, false, process_id));
+	}
+
+	struct Process
+	{
+		Handle process;
+		Handle thread;
+	};
+
+	inline std::optional<Process> CreateProcess(std::wstring executable, SECURITY_ATTRIBUTES *security_attributes, STARTUPINFO &startup_info)
+	{
+		PROCESS_INFORMATION process_info;
+		if (!::CreateProcessW(executable.c_str(), nullptr, security_attributes, nullptr, true, CREATE_NO_WINDOW, nullptr, nullptr, &startup_info, &process_info))
+		{
+			return std::nullopt;
+		}
+
+		return Process(*pfw::Handle::Create(process_info.hProcess), *pfw::Handle::Create(process_info.hThread));
 	}
 
 	inline std::optional<bool> IsProcess32bit(DWORD process_id)
